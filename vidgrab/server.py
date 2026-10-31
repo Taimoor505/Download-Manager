@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .categories import CATEGORY_NAMES
 from .grab import GrabError
@@ -23,11 +23,22 @@ STATIC_DIR = Path(__file__).parent / "static"
 EXTENSION_ORIGIN = r"^(chrome|moz)-extension://[a-zA-Z0-9-]+$"
 
 
+class SessionCookie(BaseModel):
+    """One cookie from the browser extension's chrome.cookies API. Kept in memory only."""
+    name: str = Field(max_length=256)
+    value: str = Field(max_length=8192)
+    domain: str = Field(max_length=256)
+    path: str = "/"
+    secure: bool = False
+    expirationDate: Optional[float] = None
+
+
 class NewDownload(BaseModel):
     url: str
     connections: Optional[int] = None
     start: Literal["now", "later"] = "now"
     referer: str = ""
+    cookies: List[SessionCookie] = Field(default_factory=list, max_length=300)
 
 
 class NewDownloads(BaseModel):
@@ -57,7 +68,10 @@ def build_router(manager: DownloadManager) -> APIRouter:
     def add_download(payload: NewDownload):
         if not payload.url.strip():
             raise HTTPException(status_code=400, detail="Paste a link first.")
-        job = manager.add(payload.url, payload.connections, status_for(payload.start), payload.referer)
+        cookies = [c.model_dump() for c in payload.cookies]
+        job = manager.add(
+            payload.url, payload.connections, status_for(payload.start), payload.referer, cookies
+        )
         return job.to_dict()
 
     @router.post("/batch")
@@ -130,6 +144,8 @@ def apply_settings(manager: DownloadManager, values: dict) -> None:
         sort_into_categories=values["sort_into_categories"],
         proxy=values["proxy"],
         max_height=values["max_height"],
+        auto_retry_rate_limits=values["auto_retry_blocks"],
+        cookies_browser=values["browser_login"],
     )
 
 

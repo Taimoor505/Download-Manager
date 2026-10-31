@@ -29,6 +29,7 @@ from . import segmented
 from .categories import MEDIA_EXTS, extension
 from .limiter import RateLimiter
 from .netguard import BlockedURL, check_public_url
+from .pacing import SitePacer, site_key
 from .segmented import Cancelled, DownloadError
 
 PAGE_TYPES = ("text/html", "application/xhtml+xml")
@@ -55,6 +56,10 @@ class GrabError(DownloadError):
     pass
 
 
+class RateLimited(GrabError):
+    """The site is refusing this address for now (YouTube's "confirm you're not a bot", 429)."""
+
+
 @dataclass
 class GrabResult:
     path: Path
@@ -71,6 +76,11 @@ class GrabOptions:
     proxy: Optional[str] = None
     limiter: RateLimiter = field(default_factory=RateLimiter)
     headers: Dict[str, str] = field(default_factory=dict)  # e.g. Referer from the browser
+    pacer: SitePacer = field(default_factory=SitePacer)
+    # Signed-in requests for sites like YouTube. Both are opt-in and only reach yt-dlp:
+    # a browser name to read cookies from, or cookies the browser extension sent for one job
+    cookies_browser: Optional[str] = None
+    cookies: List[Dict] = field(default_factory=list)
 
 
 def grab(
@@ -104,7 +114,8 @@ def _grab(url, out_dir, opts: GrabOptions, report, cancel, depth) -> GrabResult:
             guard(url)
         report(phase="resolving")
         with segmented.make_client(opts.connections, guard, opts.proxy, opts.headers) as client:
-            kind, info = _sniff(client, url)
+            # YouTube links are always pages; probing them first would cost an extra request
+            kind, info = ("other", {}) if site_key(url) == "youtube" else _sniff(client, url)
             if kind == "file":
                 if opts.media_only and extension(info["filename"]) not in MEDIA_EXTS:
                     raise GrabError("That link is a file, not a video.")
@@ -220,9 +231,16 @@ def _grab_with_ytdlp(url, out_dir, client, opts: GrabOptions, report, cancel):
         ydl_opts["ratelimit"] = opts.limiter.rate
     if opts.headers:
         ydl_opts["http_headers"] = dict(opts.headers)
+    if opts.cookies_browser and not opts.cookies:
+        ydl_opts["cookiesfrombrowser"] = (opts.cookies_browser,)
+    if site_key(url) == "youtube":
+        ydl_opts["sleep_interval_requests"] = 1  # space out the page/API calls of one lookup
 
     try:
+        opts.pacer.wait(url)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            for cookie in opts.cookies:
+                ydl.cookiejar.set_cookie(_to_cookie(cookie))
             info = ydl.extract_info(url, download=False)
             if info.get("_type") == "playlist":
                 entries = [e for e in info.get("entries") or [] if e]
@@ -245,7 +263,35 @@ def _grab_with_ytdlp(url, out_dir, client, opts: GrabOptions, report, cancel):
     except yt_dlp.utils.DownloadError as exc:
         if cancel.is_set():
             raise Cancelled("Cancelled")
-        raise GrabError(_friendly_ytdlp_error(str(exc)))
+        raise _ytdlp_error(str(exc), opts.cookies_browser)
+    except (GrabError, Cancelled):
+        raise
+    except Exception as exc:  # noqa: BLE001 - reading browser cookies fails in many ways
+        if opts.cookies_browser and "cookie" in str(exc).lower():
+            raise GrabError(_cookie_help(opts.cookies_browser, str(exc)))
+        raise
+
+
+def _to_cookie(c: Dict):
+    """A cookie from the browser extension (chrome.cookies format) as an http.cookiejar.Cookie."""
+    from http.cookiejar import Cookie
+
+    domain = str(c["domain"])
+    return Cookie(
+        version=0, name=str(c["name"]), value=str(c["value"]), port=None, port_specified=False,
+        domain=domain, domain_specified=True, domain_initial_dot=domain.startswith("."),
+        path=str(c.get("path") or "/"), path_specified=True, secure=bool(c.get("secure")),
+        expires=int(c["expirationDate"]) if c.get("expirationDate") else None,
+        discard=False, comment=None, comment_url=None, rest={},
+    )
+
+
+def _cookie_help(browser: str, detail: str) -> str:
+    return (
+        f"Couldn't read your {browser.title()} login ({detail.strip()[:120]}). Close {browser.title()} "
+        "and try again, switch the login setting to Firefox, or use the vidgrab browser extension, "
+        "which sends your session directly."
+    )
 
 
 class _SilentLogger:
@@ -319,20 +365,22 @@ def _download_progressive(ydl, info, formats, client, opts: GrabOptions, report,
     return final
 
 
-def _friendly_ytdlp_error(message: str) -> str:
+def _ytdlp_error(message: str, cookies_browser: Optional[str] = None) -> GrabError:
     message = ANSI_PATTERN.sub("", message).replace("ERROR: ", "").strip()
     lowered = message.lower()
     if "drm" in lowered:
-        return "This video is DRM-protected, so it can't be downloaded."
-    if "confirm you" in lowered and "bot" in lowered:
-        return (
-            "The site asked this server to sign in to prove it isn't a bot. "
-            "Try again later, or download the file yourself and upload it."
+        return GrabError("This video is DRM-protected, so it can't be downloaded.")
+    if ("confirm you" in lowered and "bot" in lowered) or "429" in lowered or "too many requests" in lowered:
+        return RateLimited(
+            "The site asked this connection to prove it isn't a bot, usually after too many "
+            "requests in a short time. Try again later."
         )
+    if cookies_browser and "cookie" in lowered and ("could not" in lowered or "failed" in lowered):
+        return GrabError(_cookie_help(cookies_browser, message))
     if any(s in lowered for s in ("private video", "login", "logged-in", "logged in", "sign in", "--cookies")):
-        return "This video needs an account to watch, so it can't be downloaded from here."
+        return GrabError("This video needs an account to watch. Turn on the browser login setting to use yours.")
     # Drop yt-dlp's "[extractor] id:" prefix
-    return re.sub(r"^\[[^\]]+\]\s*[^:]*:\s*", "", message, count=1) or "The download failed."
+    return GrabError(re.sub(r"^\[[^\]]+\]\s*[^:]*:\s*", "", message, count=1) or "The download failed.")
 
 
 def _find_media_urls(page: str, base_url: str, limit: int = 5) -> List[str]:

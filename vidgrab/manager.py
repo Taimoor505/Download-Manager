@@ -11,15 +11,20 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .categories import category_for
-from .grab import GrabError, GrabOptions, grab
+from .grab import GrabError, GrabOptions, RateLimited, grab
 from .limiter import RateLimiter
+from .pacing import SitePacer, site_key
 from .segmented import Cancelled
 
 # queued: waiting for a free slot. scheduled: waiting for the scheduler's window.
 # pending: caught from the clipboard, waiting for the user to start it.
+# waiting: the site pushed back (bot check); retried automatically at retry_at.
 WAITING = ("queued", "scheduled", "pending")
 ACTIVE = ("queued", "running")
-STOPPED = ("paused", "error", "canceled", "scheduled", "pending")
+STOPPED = ("paused", "error", "canceled", "scheduled", "pending", "waiting")
+# Backoff after each consecutive block from a site, then give up and show the error
+RETRY_DELAYS = (10 * 60, 20 * 60, 40 * 60, 60 * 60)
+TICK_SECONDS = 10
 
 
 @dataclass
@@ -40,6 +45,9 @@ class Job:
     error: str = ""
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
+    retry_at: Optional[float] = None  # when a "waiting" job tries again
+    attempts: int = 0  # consecutive blocks from the site
+    signed_in: bool = False  # the browser extension sent a session for this job
     path: Optional[Path] = None
 
     def to_dict(self) -> dict:
@@ -72,6 +80,8 @@ class DownloadManager:
         proxy: Optional[str] = None,
         speed_limit: float = 0,  # bytes per second, shared by every download; 0 = unlimited
         state_file: Optional[Path] = None,
+        auto_retry_rate_limits: bool = False,
+        cookies_browser: Optional[str] = None,
     ):
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -85,11 +95,18 @@ class DownloadManager:
         self.proxy = proxy
         self.limiter = RateLimiter(speed_limit)
         self.state_file = Path(state_file) if state_file else None
+        self.auto_retry_rate_limits = auto_retry_rate_limits
+        self.cookies_browser = cookies_browser
+        self.pacer = SitePacer()
         self._jobs: Dict[str, Job] = {}
         self._cancel: Dict[str, threading.Event] = {}
         self._running: set = set()
+        # Browser-extension sessions live only in memory and are dropped when the job ends
+        self._session_cookies: Dict[str, List[dict]] = {}
+        self._site_cooldown: Dict[str, float] = {}  # site -> time it may be tried again
         self._lock = threading.RLock()
         self._load()
+        threading.Thread(target=self._tick_forever, name="vidgrab-retry", daemon=True).start()
 
     # ---- configuration -------------------------------------------------------------
 
@@ -116,14 +133,17 @@ class DownloadManager:
         connections: Optional[int] = None,
         status: str = "queued",
         referer: str = "",
+        cookies: Optional[List[dict]] = None,
     ) -> Job:
         if status not in WAITING:
             raise ValueError(f"New downloads can't start as {status!r}.")
         conns = max(1, min(32, connections or self.connections))
         job = Job(id=uuid.uuid4().hex[:12], url=url.strip(), connections=conns,
-                  status=status, referer=referer.strip())
+                  status=status, referer=referer.strip(), signed_in=bool(cookies))
         with self._lock:
             self._jobs[job.id] = job
+            if cookies:
+                self._session_cookies[job.id] = list(cookies)
         self._save()
         self._dispatch()
         return job
@@ -143,8 +163,11 @@ class DownloadManager:
     def resume(self, job_id: str) -> Job:
         job = self._require(job_id)
         with self._lock:
+            if job.status == "waiting":
+                # "Retry now": the user overrides the site's cooldown
+                self._site_cooldown.pop(site_key(job.url), None)
             if job.status in STOPPED:
-                job.status, job.error = "queued", ""
+                job.status, job.error, job.retry_at = "queued", "", None
         self._save()
         self._dispatch()
         return job
@@ -183,6 +206,7 @@ class DownloadManager:
             self._stop(job, "canceled")
         with self._lock:
             self._jobs.pop(job_id, None)
+            self._session_cookies.pop(job_id, None)
         self._save()
         if delete_file and job.path and job.status == "done":
             job.path.unlink(missing_ok=True)
@@ -206,8 +230,8 @@ class DownloadManager:
             if job.status == "running":
                 job.status = status  # the worker sees the event and leaves the status alone
                 self._cancel[job.id].set()
-            elif job.status in WAITING or (job.status == "paused" and status == "canceled"):
-                job.status = status
+            elif job.status in (*WAITING, "waiting") or (job.status == "paused" and status == "canceled"):
+                job.status, job.retry_at = status, None
         self._save()
         return job
 
@@ -216,9 +240,12 @@ class DownloadManager:
             waiting = sorted(
                 (j for j in self._jobs.values() if j.status == "queued"), key=lambda j: j.created_at
             )
+            now = time.time()
             for job in waiting:
                 if len(self._running) >= self.max_parallel:
                     break
+                if self._site_cooldown.get(site_key(job.url), 0) > now:
+                    continue  # this site is blocking us; asking again would extend the block
                 cancel = threading.Event()
                 self._cancel[job.id] = cancel
                 self._running.add(job.id)
@@ -237,6 +264,9 @@ class DownloadManager:
             proxy=self.proxy or None,
             limiter=self.limiter,
             headers={"Referer": job.referer} if job.referer else {},
+            pacer=self.pacer,
+            cookies_browser=self.cookies_browser or None,
+            cookies=self._session_cookies.get(job.id, []),
         )
 
     def _run(self, job: Job, cancel: threading.Event) -> None:
@@ -275,8 +305,12 @@ class DownloadManager:
                 job.downloaded = job.total = path.stat().st_size
             job.status = "done"
             job.finished_at = time.time()
+            job.attempts, job.retry_at = 0, None
+            self._session_cookies.pop(job.id, None)
         except Cancelled:
             interrupted = True  # status was already set by _stop
+        except RateLimited as exc:
+            self._back_off(job, str(exc))
         except GrabError as exc:
             job.status, job.error = "error", str(exc)
         except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
@@ -292,6 +326,35 @@ class DownloadManager:
             # can be resumed or deleted
             gc.collect()
         self._dispatch()
+
+    def _back_off(self, job: Job, message: str) -> None:
+        """The site blocked us: wait (longer each time) instead of failing, unless out of tries."""
+        if not self.auto_retry_rate_limits or job.attempts >= len(RETRY_DELAYS):
+            job.status, job.error = "error", message
+            return
+        delay = RETRY_DELAYS[job.attempts]
+        job.attempts += 1
+        job.retry_at = time.time() + delay
+        job.status = "waiting"
+        job.error = f"{message.removesuffix(' Try again later.')} Retrying automatically."
+        with self._lock:
+            # Hold every job for this site, so the queue doesn't keep knocking during the block
+            site = site_key(job.url)
+            self._site_cooldown[site] = max(self._site_cooldown.get(site, 0), job.retry_at)
+
+    def _tick_forever(self) -> None:
+        while True:
+            time.sleep(TICK_SECONDS)
+            now = time.time()
+            with self._lock:
+                due = [j for j in self._jobs.values()
+                       if j.status == "waiting" and j.retry_at and j.retry_at <= now]
+                for job in due:
+                    job.status, job.retry_at = "queued", None
+            if due:
+                self._save()
+            # Also starts queued jobs whose site cooldown just ended
+            self._dispatch()
 
     def _file_into_category(self, path: Path) -> Path:
         folder = self.out_dir / category_for(path.name)
@@ -331,5 +394,9 @@ class DownloadManager:
             # Nothing runs across a restart; unfinished work waits for the user to resume
             if job.status in ACTIVE:
                 job.status = "paused"
+            if job.status == "waiting" and job.retry_at:
+                site = site_key(job.url)
+                self._site_cooldown[site] = max(self._site_cooldown.get(site, 0), job.retry_at)
             job.speed, job.eta, job.phase = 0.0, None, ""
+            job.signed_in = False  # extension sessions are never written to disk
             self._jobs[job.id] = job

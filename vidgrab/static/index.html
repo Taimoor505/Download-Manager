@@ -66,6 +66,9 @@
   .tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--line); flex-shrink: 0; text-transform: capitalize; }
   .tag.error { color: var(--err); } .tag.done { color: var(--ok); } .tag.paused { color: var(--warn); }
   .tag.scheduled, .tag.pending { color: var(--info); }
+  .tag.waiting { color: var(--warn); }
+  .job[data-status=waiting] .err { color: var(--warn); }
+  .job[data-status=waiting] .fill { background: var(--warn); }
   .err { color: var(--err); font-size: 12px; margin-top: 6px; }
   .actions { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
   .actions a { text-decoration: none; color: var(--text); }
@@ -177,6 +180,20 @@
       <small>Anything still downloading when the window closes is paused until the next window.</small>
     </div>
     <label class="check field"><input type="checkbox" id="s-clip"> Catch copied links (desktop app)</label>
+    <label class="check field"><input type="checkbox" id="s-retry"> When a site says "confirm you're not a bot", wait and retry automatically (10, 20, 40, 60 min)</label>
+    <div class="field">
+      <label for="s-login">Sign in with my browser login (YouTube and other sites)</label>
+      <select id="s-login">
+        <option value="">Off</option>
+        <option value="firefox">Firefox</option>
+        <option value="chrome">Chrome</option>
+        <option value="edge">Edge</option>
+        <option value="brave">Brave</option>
+        <option value="opera">Opera</option>
+        <option value="vivaldi">Vivaldi</option>
+      </select>
+      <small>vidgrab reads that browser's cookies when it looks up a video page, so the site sees you signed in. Chrome and Edge often lock their cookies on Windows; Firefox, or the browser extension's "Use my YouTube login" switch, is more dependable. Sites may limit accounts used for very heavy downloading.</small>
+    </div>
     <div class="dialog-error" id="settings-error" role="alert"></div>
     <div class="dialog-actions">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
@@ -266,8 +283,11 @@ function renderNav() {
 function statusLabel(job) {
   if (job.status === 'running') return job.phase || 'starting';
   if (job.status === 'pending') return 'caught link';
+  if (job.status === 'waiting') return 'waiting to retry';
   return job.status;
 }
+
+const retryTime = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 function renderJobs() {
   const match = filters().find((f) => f && f[0] === filter)[2];
@@ -286,6 +306,7 @@ function renderJobs() {
     if (job.status === 'running' || job.status === 'queued') a.push('<button class="btn small" data-act="pause">Pause</button>', '<button class="btn small" data-act="cancel">Cancel</button>');
     if (job.status === 'paused' || job.status === 'error' || job.status === 'canceled') a.push(`<button class="btn small" data-act="resume">${job.status === 'paused' ? 'Resume' : 'Retry'}</button>`);
     if (job.status === 'scheduled' || job.status === 'pending') a.push('<button class="btn small" data-act="resume">Start now</button>');
+    if (job.status === 'waiting') a.push('<button class="btn small" data-act="resume">Retry now</button>', '<button class="btn small" data-act="pause">Pause</button>');
     if (job.status === 'done') {
       a.push(`<a class="btn small" href="/api/downloads/${job.id}/file">Save a copy</a>`);
       if (info.local_actions) a.push('<button class="btn small" data-act="reveal">Show in folder</button>');
@@ -297,6 +318,8 @@ function renderJobs() {
       job.status === 'running' && job.speed ? `${human(job.speed)}/s` : '',
       job.status === 'running' && job.eta != null ? `${clock(job.eta)} left` : '',
       job.status === 'done' && job.category ? job.category : '',
+      job.status === 'waiting' && job.retry_at ? `Retrying at ${retryTime(job.retry_at)} (try ${job.attempts + 1})` : '',
+      job.signed_in ? 'Signed in via browser' : '',
       job.status !== 'done' ? `${job.connections} conn` : '',
     ].filter(Boolean);
     return `
@@ -373,6 +396,8 @@ async function openSettings() {
   $('s-start').value = s.schedule.start;
   $('s-stop').value = s.schedule.stop;
   $('s-clip').checked = s.clipboard_monitor;
+  $('s-retry').checked = s.auto_retry_blocks;
+  $('s-login').value = s.browser_login;
   $('settings-error').textContent = '';
   $('settings-dialog').showModal();
 }
@@ -389,6 +414,8 @@ $('settings-save').addEventListener('click', async (e) => {
       proxy: $('s-proxy').value,
       schedule: { enabled: $('s-sched').checked, start: $('s-start').value, stop: $('s-stop').value },
       clipboard_monitor: $('s-clip').checked,
+      auto_retry_blocks: $('s-retry').checked,
+      browser_login: $('s-login').value,
     } });
     $('settings-dialog').close();
     loadInfo();

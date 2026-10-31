@@ -15,11 +15,25 @@ async function serverUrl() {
   return server.replace(/\/$/, '');
 }
 
+const YOUTUBE_LINK = /^https?:\/\/([a-z0-9-]+\.)*(youtube\.com|youtu\.be)\//i;
+
+// Opt-in (popup switch, off by default): YouTube links carry your YouTube session, so
+// YouTube sees the same signed-in viewer as this browser instead of an anonymous request.
+// Only youtube.com cookies are read, and vidgrab keeps them in memory for that one download.
+async function youtubeSession(url) {
+  const { useYoutubeLogin } = await chrome.storage.sync.get({ useYoutubeLogin: false });
+  if (!useYoutubeLogin || !YOUTUBE_LINK.test(url)) return [];
+  const cookies = await chrome.cookies.getAll({ domain: 'youtube.com' });
+  return cookies.map(({ name, value, domain, path, secure, expirationDate }) =>
+    ({ name, value, domain, path, secure, expirationDate }));
+}
+
 async function sendToVidgrab(url, referer = '') {
+  const cookies = await youtubeSession(url);
   const res = await fetch(`${await serverUrl()}/api/downloads`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url, referer }),
+    body: JSON.stringify({ url, referer, cookies }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

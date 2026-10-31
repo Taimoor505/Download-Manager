@@ -52,6 +52,10 @@ async function init() {
     }
   }
 
+  const { useYoutubeLogin } = await chrome.storage.sync.get({ useYoutubeLogin: false });
+  $('yt-login').checked = useYoutubeLogin;
+  $('yt-login').onchange = () => chrome.storage.sync.set({ useYoutubeLogin: $('yt-login').checked });
+
   const { server } = await chrome.storage.sync.get({ server: 'http://127.0.0.1:8765' });
   $('server').value = server;
   $('server').onchange = () => chrome.storage.sync.set({ server: $('server').value.trim() || 'http://127.0.0.1:8765' });

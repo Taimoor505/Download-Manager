@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "vidgrab",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Send videos and files to the vidgrab download manager running on this computer.",
-  "permissions": ["contextMenus", "webRequest", "storage", "notifications", "tabs"],
+  "permissions": ["contextMenus", "webRequest", "storage", "notifications", "tabs", "cookies"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_title": "vidgrab" },

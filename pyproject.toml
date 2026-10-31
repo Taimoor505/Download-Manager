@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vidgrab"
-version = "0.2.0"
+version = "0.3.0"
 description = "Multi-connection, resumable download manager for files and video links from almost any site."
 readme = "README.md"
 requires-python = ">=3.10"
