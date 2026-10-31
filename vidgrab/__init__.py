@@ -1,10 +1,12 @@
-"""vidgrab: a multi-connection, resumable downloader for video links from almost any site."""
+"""vidgrab: a multi-connection, resumable download manager for files and video links."""
 
-from .grab import GrabError, GrabResult, grab
+from .grab import GrabError, GrabOptions, GrabResult, grab
+from .limiter import RateLimiter
 from .manager import DownloadManager, Job
 from .segmented import Cancelled, DownloadError
 
 __all__ = [
-    "Cancelled", "DownloadError", "DownloadManager", "GrabError", "GrabResult", "Job", "grab",
+    "Cancelled", "DownloadError", "DownloadManager", "GrabError", "GrabOptions", "GrabResult",
+    "Job", "RateLimiter", "grab",
 ]
-__version__ = "0.1.0"
+__version__ = "0.2.0"

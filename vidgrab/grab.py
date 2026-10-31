@@ -1,9 +1,10 @@
 """
-Turns any link into a media file on disk.
+Turns any link into a file on disk.
 
-1. Direct media links (an .mp4 URL, a file server) go straight to the segmented downloader.
-2. Everything else goes through yt-dlp's extractors, which know thousands of sites and also
-   handle HLS (.m3u8) and DASH (.mpd) streams. Plain progressive formats it finds are still
+1. A link that serves a file (a video, a zip, an installer, a PDF...) goes straight to the
+   segmented downloader.
+2. Web pages and streams go through yt-dlp's extractors, which know thousands of sites and
+   also handle HLS (.m3u8) and DASH (.mpd). Plain progressive formats it finds are still
    fetched by the segmented downloader; streams use yt-dlp's parallel fragment downloader.
 3. If no extractor recognises a page, the page is scanned for video/stream URLs.
 
@@ -12,10 +13,12 @@ DRM-protected media is not supported and never will be.
 
 import html as html_lib
 import mimetypes
+import os
 import re
+import shutil
 import subprocess
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import unquote, urljoin, urlsplit
@@ -23,14 +26,13 @@ from urllib.parse import unquote, urljoin, urlsplit
 import httpx
 
 from . import segmented
+from .categories import MEDIA_EXTS, extension
+from .limiter import RateLimiter
 from .netguard import BlockedURL, check_public_url
 from .segmented import Cancelled, DownloadError
 
-MEDIA_EXTS = {
-    "mp4", "m4v", "mov", "webm", "mkv", "avi", "flv", "ts", "3gp",
-    "m4a", "mp3", "aac", "ogg", "opus", "wav", "flac",
-}
-GENERIC_BINARY_TYPES = ("application/octet-stream", "binary/octet-stream", "application/mp4")
+PAGE_TYPES = ("text/html", "application/xhtml+xml")
+STREAM_TYPE_MARKERS = ("mpegurl", "dash+xml")
 MAX_PAGE_BYTES = 3 * 1024 * 1024
 MEDIA_URL_PATTERN = re.compile(
     r"""(?:https?:)?//[^\s"'<>\\]+?\.(?:mp4|m4v|webm|mov|m3u8|mpd)(?:\?[^\s"'<>\\]*)?""",
@@ -44,6 +46,11 @@ ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 Report = Callable[..., None]
 
 
+def ffmpeg_path() -> str:
+    """VIDGRAB_FFMPEG wins (the desktop build points it at its bundled copy), then PATH."""
+    return os.environ.get("VIDGRAB_FFMPEG") or shutil.which("ffmpeg") or "ffmpeg"
+
+
 class GrabError(DownloadError):
     pass
 
@@ -54,64 +61,74 @@ class GrabResult:
     title: str
 
 
+@dataclass
+class GrabOptions:
+    connections: int = 8
+    max_height: Optional[int] = None
+    max_bytes: Optional[int] = None
+    allow_private: bool = False
+    media_only: bool = False  # refuse links that aren't video/audio (ClipperX imports)
+    proxy: Optional[str] = None
+    limiter: RateLimiter = field(default_factory=RateLimiter)
+    headers: Dict[str, str] = field(default_factory=dict)  # e.g. Referer from the browser
+
+
 def grab(
     url: str,
     out_dir: Path,
     *,
-    connections: int = 8,
-    max_height: Optional[int] = None,
-    max_bytes: Optional[int] = None,
-    allow_private: bool = False,
+    options: Optional[GrabOptions] = None,
     report: Optional[Report] = None,
     cancel: Optional[threading.Event] = None,
-    _depth: int = 0,
+    **option_overrides,
 ) -> GrabResult:
     """
-    Downloads the media behind `url` into `out_dir`. `report(**fields)` receives phase
+    Downloads the file behind `url` into `out_dir`. `report(**fields)` receives phase
     ("resolving", "downloading", "merging"), title, downloaded and total as they change.
+    Options come from `options` or keyword overrides (connections=, max_height=, ...).
     """
-    url = url.strip()
-    out_dir = Path(out_dir)
+    opts = options or GrabOptions()
+    for key, value in option_overrides.items():
+        setattr(opts, key, value)
+    return _grab(url.strip(), Path(out_dir), opts, report or (lambda **f: None),
+                 cancel or threading.Event(), depth=0)
+
+
+def _grab(url, out_dir, opts: GrabOptions, report, cancel, depth) -> GrabResult:
     out_dir.mkdir(parents=True, exist_ok=True)
-    report = report or (lambda **fields: None)
-    cancel = cancel or threading.Event()
-    guard = None if allow_private else check_public_url
+    guard = None if opts.allow_private else check_public_url
     if not url.lower().startswith(("http://", "https://")):
         raise GrabError("Paste a full link starting with http:// or https://.")
     try:
         if guard:
             guard(url)
         report(phase="resolving")
-        with segmented.make_client(connections, guard) as client:
+        with segmented.make_client(opts.connections, guard, opts.proxy, opts.headers) as client:
             kind, info = _sniff(client, url)
             if kind == "file":
+                if opts.media_only and extension(info["filename"]) not in MEDIA_EXTS:
+                    raise GrabError("That link is a file, not a video.")
                 dest = _unique_path(out_dir / info["filename"])
-                report(phase="downloading", title=dest.stem)
+                report(phase="downloading", title=dest.name)
                 segmented.download(
-                    info["url"], dest, connections=connections, client=client,
+                    info["url"], dest, connections=opts.connections, client=client,
                     on_progress=lambda done, total: report(downloaded=done, total=total),
-                    cancel=cancel, max_bytes=max_bytes,
+                    cancel=cancel, max_bytes=opts.max_bytes, limiter=opts.limiter,
                 )
                 return GrabResult(dest, dest.stem)
 
             try:
-                return _grab_with_ytdlp(
-                    url, out_dir, client, connections, max_height, max_bytes, report, cancel
-                )
+                return _grab_with_ytdlp(url, out_dir, client, opts, report, cancel)
             except GrabError as exc:
-                if kind != "page" or _depth > 0 or "Unsupported URL" not in str(exc):
+                if kind != "page" or depth > 0 or "Unsupported URL" not in str(exc):
                     raise
             # No extractor knows this site: look for media URLs in the page itself
             for media_url in _find_media_urls(info["html"], info["url"]):
                 try:
-                    return grab(
-                        media_url, out_dir, connections=connections, max_height=max_height,
-                        max_bytes=max_bytes, allow_private=allow_private, report=report,
-                        cancel=cancel, _depth=_depth + 1,
-                    )
+                    return _grab(media_url, out_dir, opts, report, cancel, depth + 1)
                 except (GrabError, BlockedURL):
                     continue
-            raise GrabError("No downloadable video was found on this page.")
+            raise GrabError("No downloadable video or file was found on this page.")
     except BlockedURL as exc:
         raise GrabError(str(exc))
     except Cancelled:
@@ -130,31 +147,32 @@ def _sniff(client: httpx.Client, url: str) -> tuple:
                 return "other", {}
             final_url = str(r.url)
             ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
-            name = _filename(r.headers.get("content-disposition", ""), final_url)
-            ext = Path(name).suffix.lower().lstrip(".")
-            is_media = ctype.startswith(("video/", "audio/")) and "mpegurl" not in ctype
-            if is_media or (ctype in GENERIC_BINARY_TYPES and ext in MEDIA_EXTS):
-                if ext not in MEDIA_EXTS:
-                    guessed = (mimetypes.guess_extension(ctype) or ".mp4").lstrip(".")
-                    name = f"{name}.{guessed}"
-                return "file", {"url": final_url, "filename": name}
-            if ctype in ("text/html", "application/xhtml+xml"):
+            if any(marker in ctype for marker in STREAM_TYPE_MARKERS):
+                return "other", {}  # HLS/DASH manifest: yt-dlp downloads the stream
+            if ctype in PAGE_TYPES:
                 body = bytearray()
                 for chunk in r.iter_bytes():
                     body += chunk
                     if len(body) > MAX_PAGE_BYTES:
                         break
                 return "page", {"url": final_url, "html": body.decode(r.encoding or "utf-8", "replace")}
+            # Anything else that isn't a web page is a file to save, like IDM does
+            name = _filename(r.headers.get("content-disposition", ""), final_url)
+            if not extension(name) and ctype:
+                guessed = mimetypes.guess_extension(ctype)
+                if guessed:
+                    name += guessed
+            return "file", {"url": final_url, "filename": name}
     except httpx.HTTPError:
         pass
     return "other", {}
 
 
-def _grab_with_ytdlp(url, out_dir, client, connections, max_height, max_bytes, report, cancel):
+def _grab_with_ytdlp(url, out_dir, client, opts: GrabOptions, report, cancel):
     try:
         import yt_dlp
     except ImportError:
-        raise GrabError("yt-dlp is not installed, so only direct media links can be downloaded.")
+        raise GrabError("yt-dlp is not installed, so only direct file links can be downloaded.")
 
     def progress_hook(d):
         if cancel.is_set():
@@ -169,11 +187,12 @@ def _grab_with_ytdlp(url, out_dir, client, connections, max_height, max_bytes, r
         if d.get("status") == "started" and d.get("postprocessor") == "Merger":
             report(phase="merging")
 
-    if max_height:
-        fmt = f"bv*[height<={max_height}]+ba/b[height<={max_height}]/bv*+ba/b"
+    if opts.max_height:
+        h = opts.max_height
+        fmt = f"bv*[height<={h}]+ba/b[height<={h}]/bv*+ba/b"
     else:
         fmt = "bv*+ba/b"
-    opts = {
+    ydl_opts = {
         "format": fmt,
         "format_sort": ["res", "ext:mp4:m4a"],
         "merge_output_format": "mp4/mkv",
@@ -181,9 +200,10 @@ def _grab_with_ytdlp(url, out_dir, client, connections, max_height, max_bytes, r
         "windowsfilenames": True,
         "noplaylist": True,
         "playlist_items": "1",
-        "concurrent_fragment_downloads": connections,
+        "concurrent_fragment_downloads": opts.connections,
         # YouTube needs a JS runtime to unlock full-speed formats; use whichever is installed
         "js_runtimes": {"deno": {}, "node": {}},
+        "ffmpeg_location": ffmpeg_path(),
         "logger": _SilentLogger(),
         "quiet": True,
         "no_warnings": True,
@@ -191,11 +211,18 @@ def _grab_with_ytdlp(url, out_dir, client, connections, max_height, max_bytes, r
         "progress_hooks": [progress_hook],
         "postprocessor_hooks": [postprocessor_hook],
     }
-    if max_bytes:
-        opts["max_filesize"] = max_bytes
+    if opts.max_bytes:
+        ydl_opts["max_filesize"] = opts.max_bytes
+    if opts.proxy:
+        ydl_opts["proxy"] = opts.proxy
+    if opts.limiter.rate:
+        # yt-dlp's own downloader takes a fixed limit; changes apply to the next download
+        ydl_opts["ratelimit"] = opts.limiter.rate
+    if opts.headers:
+        ydl_opts["http_headers"] = dict(opts.headers)
 
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             if info.get("_type") == "playlist":
                 entries = [e for e in info.get("entries") or [] if e]
@@ -208,9 +235,7 @@ def _grab_with_ytdlp(url, out_dir, client, connections, max_height, max_bytes, r
             formats = info.get("requested_formats") or [info]
             # YouTube throttles plain range requests; its own downloader knows the workarounds
             if info.get("extractor_key") != "Youtube" and all(_is_progressive(f) for f in formats):
-                path = _download_progressive(
-                    ydl, info, formats, client, connections, max_bytes, report, cancel
-                )
+                path = _download_progressive(ydl, info, formats, client, opts, report, cancel)
             else:
                 ydl.process_info(info)
                 downloads = info.get("requested_downloads") or []
@@ -243,7 +268,7 @@ def _is_progressive(fmt: Dict) -> bool:
     return fmt.get("protocol") in ("http", "https") and bool(fmt.get("url")) and not fmt.get("fragments")
 
 
-def _download_progressive(ydl, info, formats, client, connections, max_bytes, report, cancel) -> Path:
+def _download_progressive(ydl, info, formats, client, opts: GrabOptions, report, cancel) -> Path:
     """Fetches each format with the segmented downloader, then muxes video + audio."""
     final = Path(ydl.prepare_filename(info))
     if len(formats) == 2:
@@ -271,8 +296,9 @@ def _download_progressive(ydl, info, formats, client, connections, max_bytes, re
     for i, fmt in enumerate(formats):
         part = final if len(formats) == 1 else final.with_suffix(f".f{fmt.get('format_id')}.{fmt.get('ext')}")
         segmented.download(
-            fmt["url"], part, connections=connections, headers=fmt.get("http_headers") or {},
-            client=client, on_progress=progress_for(i), cancel=cancel, max_bytes=max_bytes,
+            fmt["url"], part, connections=opts.connections,
+            headers=fmt.get("http_headers") or {}, client=client, on_progress=progress_for(i),
+            cancel=cancel, max_bytes=opts.max_bytes, limiter=opts.limiter,
         )
         parts.append(part)
 
@@ -280,7 +306,7 @@ def _download_progressive(ydl, info, formats, client, connections, max_bytes, re
         report(phase="merging")
         proc = subprocess.run(
             [
-                "ffmpeg", "-y", "-i", str(parts[0]), "-i", str(parts[1]),
+                ffmpeg_path(), "-y", "-i", str(parts[0]), "-i", str(parts[1]),
                 "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", str(final),
             ],
             capture_output=True,
