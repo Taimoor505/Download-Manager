@@ -8,6 +8,8 @@ from typing import Any, Dict
 
 TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 PROXY_SCHEMES = ("http://", "https://", "socks5://", "socks5h://")
+# Browsers yt-dlp can read logins from; "" turns the feature off
+LOGIN_BROWSERS = ("", "firefox", "chrome", "edge", "brave", "opera", "vivaldi", "chromium")
 
 
 def default_data_dir() -> Path:
@@ -25,6 +27,9 @@ def defaults() -> Dict[str, Any]:
         "max_height": 0,  # 0 = best available
         "schedule": {"enabled": False, "start": "02:00", "stop": "07:00"},
         "clipboard_monitor": True,  # desktop app only
+        "auto_retry_blocks": True,  # wait and retry when a site says "confirm you're not a bot"
+        # Opt-in: sign in to sites like YouTube with this browser's login. "" = never
+        "browser_login": "",
     }
 
 
@@ -90,6 +95,11 @@ class Settings:
         out["proxy"] = proxy
         out["sort_into_categories"] = bool(v["sort_into_categories"])
         out["clipboard_monitor"] = bool(v["clipboard_monitor"])
+        out["auto_retry_blocks"] = bool(v["auto_retry_blocks"])
+        browser = str(v.get("browser_login") or "").strip().lower()
+        if browser not in LOGIN_BROWSERS:
+            raise SettingsError(f"Browser login must be one of: {', '.join(b or 'off' for b in LOGIN_BROWSERS)}.")
+        out["browser_login"] = browser
         schedule = dict(v["schedule"])
         for key in ("start", "stop"):
             if not TIME_PATTERN.match(str(schedule.get(key, ""))):

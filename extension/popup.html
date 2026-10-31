@@ -25,6 +25,9 @@
   .empty { color: var(--muted); font-size: 12px; }
   .msg { min-height: 16px; font-size: 12px; margin-top: 8px; }
   .msg.err { color: var(--err); } .msg.ok { color: var(--ok); }
+  .login { border-top: 1px solid var(--line); padding-top: 10px; }
+  .switch { display: flex; gap: 8px; align-items: center; cursor: pointer; font-weight: 600; }
+  .note { color: var(--muted); font-size: 11px; margin: 6px 0 0; }
   details { border-top: 1px solid var(--line); padding: 10px 14px; color: var(--muted); }
   details input { width: 100%; box-sizing: border-box; height: 30px; margin-top: 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 0 8px; }
 </style>
@@ -39,6 +42,10 @@
     <div class="msg" id="msg" role="status"></div>
     <h2>Media found on this page</h2>
     <ul id="found"></ul>
+  </section>
+  <section class="login">
+    <label class="switch"><input type="checkbox" id="yt-login"> Use my YouTube login for YouTube links</label>
+    <p class="note">Makes YouTube downloads as reliable as watching in this browser. Sends your youtube.com cookies to vidgrab on this computer only, for that download. YouTube may limit accounts used for very heavy downloading.</p>
   </section>
   <details>
     <summary>Connection</summary>

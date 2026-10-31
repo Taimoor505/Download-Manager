@@ -26,7 +26,20 @@ It comes in four forms:
 
 **Not supported:**
 - DRM-protected video (Netflix, Disney+ and so on).
-- Content that needs a site login.
+
+## YouTube reliability
+
+YouTube flags an address that asks for many videos in a short time and starts answering "confirm you're not a bot". vidgrab handles this in three ways:
+
+- **Spacing:** YouTube lookups are at least 8 seconds apart, and YouTube links skip the extra page probe other links get.
+- **Automatic retry** (Settings, on by default): a blocked download shows **Waiting** and retries after 10, 20, 40, then 60 minutes. Other YouTube downloads hold back meanwhile, so the queue doesn't extend the block; other sites keep downloading. **Retry now** overrides the wait.
+- **Signed-in requests** (opt-in, off by default). A request from your signed-in browser looks like normal viewing. Two ways to turn it on:
+  - **Browser extension:** switch on "Use my YouTube login" in the extension's popup. YouTube downloads sent from the browser then carry your youtube.com cookies. They are read through the browser's cookie API, held in memory for that one download, and never written to disk. This is the most dependable option.
+  - **Settings → Sign in with my browser login:** vidgrab reads the chosen browser's cookies when it looks up a video page. Firefox works best. Chrome and Edge on Windows often lock their cookie store, so prefer the extension for them.
+
+  Either way it's your account: sites may restrict accounts used for very heavy downloading.
+
+Grabbing the stream straight from the YouTube tab (how IDM used to do it) isn't possible today. YouTube's player now streams with "SABR", whose requests carry no reusable video URL. So the extension hands vidgrab your session instead.
 
 ## Desktop app (Windows)
 
