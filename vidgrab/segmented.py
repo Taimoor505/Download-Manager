@@ -17,6 +17,8 @@ from typing import Callable, Dict, List, Optional
 
 import httpx
 
+from .limiter import RateLimiter
+
 CHUNK_SIZE = 256 * 1024
 # A range is only split when both halves would be at least this big
 MIN_SPLIT_BYTES = 1024 * 1024
@@ -50,14 +52,20 @@ class Segment:
             self.pos = self.written
 
 
-def make_client(connections: int, guard: Optional[Callable[[str], None]] = None) -> httpx.Client:
+def make_client(
+    connections: int,
+    guard: Optional[Callable[[str], None]] = None,
+    proxy: Optional[str] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> httpx.Client:
     hooks = {"request": [lambda request: guard(str(request.url))]} if guard else {}
     return httpx.Client(
         follow_redirects=True,
         timeout=httpx.Timeout(30.0, read=60.0),
         limits=httpx.Limits(max_connections=connections + 4),
-        headers={"User-Agent": USER_AGENT},
+        headers={"User-Agent": USER_AGENT, **(headers or {})},
         event_hooks=hooks,
+        proxy=proxy or None,
     )
 
 
@@ -85,11 +93,13 @@ def download(
     on_progress: Optional[ProgressFn] = None,
     cancel: Optional[threading.Event] = None,
     max_bytes: Optional[int] = None,
+    limiter: Optional[RateLimiter] = None,
 ) -> Path:
     dest = Path(dest)
     headers = dict(headers or {})
     on_progress = on_progress or (lambda done, total: None)
     cancel = cancel or threading.Event()
+    limiter = limiter or RateLimiter(0)
     own_client = client is None
     client = client or make_client(connections)
     try:
@@ -99,16 +109,20 @@ def download(
                 f"File is {size / 1e9:.1f} GB, over the {max_bytes / 1e9:.1f} GB limit."
             )
         if ranged and size:
-            _download_ranges(client, final_url, dest, size, connections, headers, on_progress, cancel)
+            _download_ranges(
+                client, final_url, dest, size, connections, headers, on_progress, cancel, limiter
+            )
         else:
-            _download_single(client, final_url, dest, size, headers, on_progress, cancel, max_bytes)
+            _download_single(
+                client, final_url, dest, size, headers, on_progress, cancel, max_bytes, limiter
+            )
         return dest
     finally:
         if own_client:
             client.close()
 
 
-def _download_single(client, url, dest, size, headers, on_progress, cancel, max_bytes):
+def _download_single(client, url, dest, size, headers, on_progress, cancel, max_bytes, limiter):
     """For servers without range support: one connection, no resume."""
     part = dest.with_name(dest.name + ".part")
     done = 0
@@ -119,6 +133,7 @@ def _download_single(client, url, dest, size, headers, on_progress, cancel, max_
             for chunk in r.iter_bytes(CHUNK_SIZE):
                 if cancel.is_set():
                     raise Cancelled("Cancelled")
+                limiter.consume(len(chunk))
                 f.write(chunk)
                 done += len(chunk)
                 if max_bytes and done > max_bytes:
@@ -137,7 +152,7 @@ def _load_state(state_path: Path, part: Path, size: int) -> Optional[List[Segmen
         return None
 
 
-def _download_ranges(client, url, dest, size, connections, headers, on_progress, cancel):
+def _download_ranges(client, url, dest, size, connections, headers, on_progress, cancel, limiter):
     part = dest.with_name(dest.name + ".part")
     state_path = dest.with_name(dest.name + STATE_SUFFIX)
     segments = _load_state(state_path, part, size)
@@ -197,6 +212,7 @@ def _download_ranges(client, url, dest, size, connections, headers, on_progress,
                         for chunk in r.iter_bytes(CHUNK_SIZE):
                             if cancel.is_set() or stop.is_set():
                                 raise Cancelled("Cancelled")
+                            limiter.consume(len(chunk))
                             # Claim under the lock: another worker may have shortened this range
                             with lock:
                                 take = min(len(chunk), seg.end - seg.pos + 1)

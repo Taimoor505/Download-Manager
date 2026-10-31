@@ -6,89 +6,227 @@
 <title>vidgrab</title>
 <style>
   :root {
-    --bg: #0b0f17; --panel: #121826; --line: #232c3d; --text: #e6e9ef; --muted: #8a94a7;
-    --accent: #7c3aed; --accent-hover: #6d28d9; --ok: #22c55e; --err: #f87171; --warn: #f59e0b;
+    --bg: #0b0f17; --panel: #121826; --panel-2: #0f1520; --line: #232c3d; --text: #e6e9ef; --muted: #8a94a7;
+    --accent: #7c3aed; --accent-hover: #6d28d9; --ok: #22c55e; --err: #f87171; --warn: #f59e0b; --info: #38bdf8;
   }
   @media (prefers-color-scheme: light) {
     :root:not([data-theme="dark"]) {
-      --bg: #f6f7fb; --panel: #ffffff; --line: #e3e6ee; --text: #151a24; --muted: #5d6678;
+      --bg: #f6f7fb; --panel: #ffffff; --panel-2: #f1f3f8; --line: #e3e6ee; --text: #151a24; --muted: #5d6678;
     }
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button, select, input { font: inherit; color: inherit; }
+  .app { display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
+  aside { border-right: 1px solid var(--line); padding: 20px 12px; background: var(--panel-2); }
+  .brand { font-size: 18px; font-weight: 700; padding: 0 8px 16px; letter-spacing: -0.01em; }
+  .nav button {
+    display: flex; justify-content: space-between; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px;
+    background: transparent; cursor: pointer; text-align: left; color: var(--muted);
   }
-  main { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
-  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
-  .folder { color: var(--muted); font-size: 12px; word-break: break-all; }
-  form { display: flex; gap: 8px; margin: 20px 0 8px; flex-wrap: wrap; }
-  input[type=url] {
-    flex: 1 1 320px; height: 44px; padding: 0 14px; border-radius: 10px;
-    border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 14px;
+  .nav button:hover { background: var(--panel); color: var(--text); }
+  .nav button[aria-current="true"] { background: var(--panel); color: var(--text); font-weight: 600; }
+  .nav .count { font-variant-numeric: tabular-nums; font-size: 12px; }
+  .nav hr { border: 0; border-top: 1px solid var(--line); margin: 10px 4px; }
+  main { padding: 20px 24px 64px; min-width: 0; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: space-between; }
+  .toolbar .group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn {
+    height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel);
+    cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
   }
-  input[type=url]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  select, button {
-    height: 44px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--panel); color: var(--text); padding: 0 12px; font-size: 14px; cursor: pointer;
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover { background: var(--accent-hover); }
+  .btn.small { height: 28px; font-size: 12px; padding: 0 9px; border-radius: 7px; }
+  select, input[type=text], input[type=url], input[type=number], input[type=time] {
+    height: 36px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel);
   }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 0 20px; }
-  button.primary:hover { background: var(--accent-hover); }
-  .hint { color: var(--muted); font-size: 12px; margin: 0 0 20px; }
-  .error-banner { color: var(--err); font-size: 13px; min-height: 18px; margin-bottom: 8px; }
+  input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .speed { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  form.add { display: flex; gap: 8px; margin: 16px 0 6px; flex-wrap: wrap; }
+  form.add input[type=url] { flex: 1 1 320px; height: 44px; font-size: 14px; }
+  form.add select, form.add .btn { height: 44px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+  .banner { color: var(--err); font-size: 13px; min-height: 18px; margin-bottom: 6px; }
   .empty { color: var(--muted); text-align: center; padding: 48px 0; border: 1px dashed var(--line); border-radius: 12px; }
-  .job { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+  .job { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
   .row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
   .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .url { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bar { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 10px 0 8px; }
+  .bar { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 9px 0 7px; }
   .fill { height: 100%; background: var(--accent); width: 0; transition: width .4s ease; }
   .fill.indeterminate { width: 30%; animation: slide 1.2s ease-in-out infinite; }
   @keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .fill { transition: none; } .fill.indeterminate { animation: none; } }
   .job[data-status=done] .fill { background: var(--ok); }
   .job[data-status=error] .fill { background: var(--err); }
   .job[data-status=paused] .fill { background: var(--warn); }
   .stats { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; display: flex; gap: 14px; flex-wrap: wrap; }
-  .status { font-size: 12px; font-weight: 600; text-transform: capitalize; flex-shrink: 0; }
-  .status.error { color: var(--err); } .status.done { color: var(--ok); } .status.paused { color: var(--warn); }
+  .tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--line); flex-shrink: 0; text-transform: capitalize; }
+  .tag.error { color: var(--err); } .tag.done { color: var(--ok); } .tag.paused { color: var(--warn); }
+  .tag.scheduled, .tag.pending { color: var(--info); }
   .err { color: var(--err); font-size: 12px; margin-top: 6px; }
-  .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
-  .actions button, .actions a {
-    height: 30px; font-size: 12px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line);
-    background: transparent; color: var(--text); text-decoration: none; display: inline-flex; align-items: center; cursor: pointer;
+  .actions { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+  .actions a { text-decoration: none; color: var(--text); }
+  dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); padding: 0; width: min(560px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgb(0 0 0 / 0.5); }
+  dialog form { padding: 20px; }
+  dialog h2 { margin: 0 0 14px; font-size: 17px; }
+  .field { display: grid; gap: 5px; margin-bottom: 12px; }
+  .field label, .field .label { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .field small { color: var(--muted); font-size: 12px; }
+  .inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .check { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .dialog-error { color: var(--err); font-size: 13px; min-height: 18px; }
+  .found { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; margin-top: 10px; }
+  .found label { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+  .found label:last-child { border-bottom: 0; }
+  .found .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .found .cat { color: var(--muted); font-size: 11px; }
+  @media (max-width: 720px) {
+    .app { grid-template-columns: 1fr; }
+    aside { border-right: 0; border-bottom: 1px solid var(--line); padding: 12px 16px; }
+    .brand { padding-bottom: 8px; }
+    .nav { display: flex; gap: 4px; overflow-x: auto; }
+    .nav button { width: auto; gap: 6px; flex-shrink: 0; }
+    .nav hr { display: none; }
+    main { padding: 16px; }
   }
-  .actions button:hover, .actions a:hover { border-color: var(--accent); }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <h1>vidgrab</h1>
-    <span class="folder" id="folder"></span>
-  </header>
-  <form id="add">
-    <input type="url" id="url" placeholder="Paste a video link: YouTube, Vimeo, X, Reddit, a direct .mp4 or .m3u8..." required>
-    <select id="connections" aria-label="Connections per file">
-      <option value="4">4 connections</option>
-      <option value="8" selected>8 connections</option>
-      <option value="16">16 connections</option>
-    </select>
-    <button class="primary" type="submit">Download</button>
-  </form>
-  <p class="hint">Files are split into parts and fetched in parallel. Paused downloads resume where they stopped. DRM-protected video is not supported.</p>
-  <div class="error-banner" id="banner" role="alert"></div>
-  <section id="jobs"></section>
-</main>
-<script>
-const api = (path, opts) => fetch(`/api${path}`, opts).then(async (r) => {
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}));
-    throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`);
-  }
-  return r.json();
-});
+<div class="app">
+  <aside>
+    <div class="brand">vidgrab</div>
+    <nav class="nav" id="nav" aria-label="Filter downloads"></nav>
+  </aside>
+  <main>
+    <div class="toolbar">
+      <div class="group">
+        <button class="btn" id="pause-all" type="button">Pause all</button>
+        <button class="btn" id="resume-all" type="button">Resume all</button>
+        <button class="btn" id="open-grabber" type="button">Grab files from a page</button>
+      </div>
+      <div class="group">
+        <span class="speed" id="total-speed"></span>
+        <label class="speed" for="limit">Speed limit</label>
+        <select id="limit">
+          <option value="0">Unlimited</option>
+          <option value="128">128 KB/s</option>
+          <option value="256">256 KB/s</option>
+          <option value="512">512 KB/s</option>
+          <option value="1024">1 MB/s</option>
+          <option value="2048">2 MB/s</option>
+          <option value="5120">5 MB/s</option>
+        </select>
+        <button class="btn" id="open-settings" type="button">Settings</button>
+      </div>
+    </div>
 
+    <form class="add" id="add">
+      <input type="url" id="url" placeholder="Paste a link: a video page, a stream, or any file (.zip, .exe, .pdf...)" required aria-label="Link to download">
+      <select id="connections" aria-label="Connections per file">
+        <option value="4">4 connections</option>
+        <option value="8" selected>8 connections</option>
+        <option value="16">16 connections</option>
+        <option value="32">32 connections</option>
+      </select>
+      <select id="start" aria-label="When to start">
+        <option value="now">Start now</option>
+        <option value="later">Download later</option>
+      </select>
+      <button class="btn primary" type="submit">Download</button>
+    </form>
+    <p class="hint" id="hint">Files are split into parts and fetched in parallel. Paused and crashed downloads resume where they stopped.</p>
+    <div class="banner" id="banner" role="alert"></div>
+    <section id="jobs" aria-live="polite"></section>
+  </main>
+</div>
+
+<dialog id="settings-dialog" aria-labelledby="settings-title">
+  <form method="dialog" id="settings-form">
+    <h2 id="settings-title">Settings</h2>
+    <div class="field">
+      <label for="s-dir">Download folder</label>
+      <input type="text" id="s-dir" required>
+    </div>
+    <label class="check field"><input type="checkbox" id="s-sort"> Sort finished files into folders (Video, Audio, Compressed, Documents, Programs, Other)</label>
+    <div class="inline">
+      <div class="field"><label for="s-conn">Connections per file</label><input type="number" id="s-conn" min="1" max="32"></div>
+      <div class="field"><label for="s-par">Downloads at once</label><input type="number" id="s-par" min="1" max="10"></div>
+      <div class="field">
+        <label for="s-height">Video quality</label>
+        <select id="s-height">
+          <option value="0">Best available</option><option value="2160">Up to 4K</option>
+          <option value="1080">Up to 1080p</option><option value="720">Up to 720p</option><option value="480">Up to 480p</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label for="s-proxy">Proxy</label>
+      <input type="text" id="s-proxy" placeholder="Leave empty for none. e.g. http://127.0.0.1:8080 or socks5://host:1080">
+    </div>
+    <div class="field">
+      <span class="label">Scheduler</span>
+      <label class="check"><input type="checkbox" id="s-sched"> Run "Download later" items only between</label>
+      <div class="inline">
+        <input type="time" id="s-start" aria-label="Start time"> and <input type="time" id="s-stop" aria-label="Stop time">
+      </div>
+      <small>Anything still downloading when the window closes is paused until the next window.</small>
+    </div>
+    <label class="check field"><input type="checkbox" id="s-clip"> Catch copied links (desktop app)</label>
+    <div class="dialog-error" id="settings-error" role="alert"></div>
+    <div class="dialog-actions">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" id="settings-save" value="save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="grabber-dialog" aria-labelledby="grabber-title">
+  <form method="dialog" id="grabber-form">
+    <h2 id="grabber-title">Grab files from a page</h2>
+    <div class="field">
+      <label for="g-url">Page link</label>
+      <div class="inline">
+        <input type="url" id="g-url" placeholder="https://example.com/downloads" style="flex:1">
+        <button class="btn" id="g-find" type="button">Find files</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="label">File types</span>
+      <div class="inline" id="g-cats"></div>
+    </div>
+    <div class="inline" id="g-tools" hidden>
+      <label class="check"><input type="checkbox" id="g-all" checked> Select all</label>
+      <span class="speed" id="g-count"></span>
+    </div>
+    <div class="found" id="g-found" hidden></div>
+    <div class="dialog-error" id="grabber-error" role="alert"></div>
+    <div class="dialog-actions">
+      <button class="btn" value="cancel" formnovalidate>Close</button>
+      <button class="btn" id="g-later" type="button" disabled>Add for later</button>
+      <button class="btn primary" id="g-add" type="button" disabled>Download selected</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = (path, opts = {}) => {
+  if (opts.body && typeof opts.body !== 'string') {
+    opts = { ...opts, body: JSON.stringify(opts.body), headers: { 'Content-Type': 'application/json' } };
+  }
+  return fetch(`/api${path}`, opts).then(async (r) => {
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${r.status}`);
+    }
+    return r.json();
+  });
+};
 const human = (n) => {
   if (n == null) return '?';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -99,87 +237,226 @@ const human = (n) => {
 const clock = (s) => s == null ? '' : s >= 3600
   ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m`
   : `${Math.floor(s / 60)}m ${String(Math.floor(s % 60)).padStart(2, '0')}s`;
-const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const banner = document.getElementById('banner');
-const list = document.getElementById('jobs');
+const FILTERS = [
+  ['all', 'All downloads', () => true],
+  ['unfinished', 'Unfinished', (j) => j.status !== 'done'],
+  ['finished', 'Finished', (j) => j.status === 'done'],
+  ['later', 'Scheduled', (j) => j.status === 'scheduled'],
+  ['pending', 'Caught links', (j) => j.status === 'pending'],
+  null,
+];
+let categories = ['Video', 'Audio', 'Compressed', 'Documents', 'Programs', 'Other'];
+let filter = 'all';
+let jobs = [];
+let info = { local_actions: false };
+
+function filters() {
+  return [...FILTERS, ...categories.map((c) => [`cat:${c}`, c, (j) => j.status === 'done' && j.category === c])];
+}
+
+function renderNav() {
+  $('nav').innerHTML = filters().map((f) => f === null ? '<hr>' : `
+    <button type="button" data-filter="${f[0]}" aria-current="${f[0] === filter}">
+      <span>${esc(f[1])}</span><span class="count">${jobs.filter(f[2]).length || ''}</span>
+    </button>`).join('');
+}
 
 function statusLabel(job) {
   if (job.status === 'running') return job.phase || 'starting';
+  if (job.status === 'pending') return 'caught link';
   return job.status;
 }
 
-function render(jobs) {
-  if (!jobs.length) {
-    list.innerHTML = '<div class="empty">No downloads yet. Paste a link above.</div>';
+function renderJobs() {
+  const match = filters().find((f) => f && f[0] === filter)[2];
+  const shown = jobs.filter(match);
+  const running = jobs.filter((j) => j.status === 'running');
+  const speed = running.reduce((s, j) => s + (j.speed || 0), 0);
+  $('total-speed').textContent = running.length ? `${running.length} active · ${human(speed)}/s` : '';
+  if (!shown.length) {
+    $('jobs').innerHTML = `<div class="empty">${jobs.length ? 'Nothing here.' : 'No downloads yet. Paste a link above.'}</div>`;
     return;
   }
-  list.innerHTML = jobs.map((job) => {
+  $('jobs').innerHTML = shown.map((job) => {
     const pct = job.total ? Math.min(100, job.downloaded / job.total * 100) : 0;
     const unknown = job.status === 'running' && !job.total;
-    const actions = [];
-    if (job.status === 'running' || job.status === 'queued') {
-      actions.push(`<button data-act="pause">Pause</button>`, `<button data-act="cancel">Cancel</button>`);
+    const a = [];
+    if (job.status === 'running' || job.status === 'queued') a.push('<button class="btn small" data-act="pause">Pause</button>', '<button class="btn small" data-act="cancel">Cancel</button>');
+    if (job.status === 'paused' || job.status === 'error' || job.status === 'canceled') a.push(`<button class="btn small" data-act="resume">${job.status === 'paused' ? 'Resume' : 'Retry'}</button>`);
+    if (job.status === 'scheduled' || job.status === 'pending') a.push('<button class="btn small" data-act="resume">Start now</button>');
+    if (job.status === 'done') {
+      a.push(`<a class="btn small" href="/api/downloads/${job.id}/file">Save a copy</a>`);
+      if (info.local_actions) a.push('<button class="btn small" data-act="reveal">Show in folder</button>');
     }
-    if (['paused', 'error', 'canceled'].includes(job.status)) actions.push(`<button data-act="resume">${job.status === 'paused' ? 'Resume' : 'Retry'}</button>`);
-    if (job.status === 'done') actions.push(`<a href="/api/downloads/${job.id}/file">Save file</a>`);
-    if (!['running', 'queued'].includes(job.status)) actions.push(`<button data-act="remove">Remove from list</button>`);
+    if (!['running', 'queued'].includes(job.status)) a.push(`<button class="btn small" data-act="remove">${job.status === 'pending' ? 'Discard' : 'Remove from list'}</button>`);
     const stats = [
       job.total ? `${human(job.downloaded)} / ${human(job.total)}` : job.downloaded ? human(job.downloaded) : '',
-      job.total ? `${pct.toFixed(1)}%` : '',
+      job.total && job.status !== 'done' ? `${pct.toFixed(1)}%` : '',
       job.status === 'running' && job.speed ? `${human(job.speed)}/s` : '',
       job.status === 'running' && job.eta != null ? `${clock(job.eta)} left` : '',
-      `${job.connections} conn`,
+      job.status === 'done' && job.category ? job.category : '',
+      job.status !== 'done' ? `${job.connections} conn` : '',
     ].filter(Boolean);
     return `
       <article class="job" data-id="${job.id}" data-status="${job.status}">
         <div class="row">
-          <div class="title">${escapeHtml(job.filename || job.title || 'Finding video...')}</div>
-          <span class="status ${job.status}">${escapeHtml(statusLabel(job))}</span>
+          <div class="title">${esc(job.filename || job.title || job.url)}</div>
+          <span class="tag ${job.status}">${esc(statusLabel(job))}</span>
         </div>
-        <div class="url">${escapeHtml(job.url)}</div>
+        <div class="url">${esc(job.url)}</div>
         <div class="bar"><div class="fill${unknown ? ' indeterminate' : ''}" style="width:${job.status === 'done' ? 100 : unknown ? 30 : pct}%"></div></div>
         <div class="stats">${stats.map((s) => `<span>${s}</span>`).join('')}</div>
-        ${job.error ? `<div class="err">${escapeHtml(job.error)}</div>` : ''}
-        <div class="actions">${actions.join('')}</div>
+        ${job.error ? `<div class="err">${esc(job.error)}</div>` : ''}
+        <div class="actions">${a.join('')}</div>
       </article>`;
   }).join('');
 }
 
 async function refresh() {
-  try { render(await api('/downloads')); } catch { /* server restarting; try again next tick */ }
+  try {
+    jobs = await api('/downloads');
+    renderNav();
+    renderJobs();
+  } catch { /* server restarting; next tick retries */ }
 }
 
-list.addEventListener('click', async (e) => {
-  const button = e.target.closest('button[data-act]');
-  if (!button) return;
-  const id = button.closest('.job').dataset.id;
-  const act = button.dataset.act;
+const banner = (msg = '') => { $('banner').textContent = msg; };
+
+$('nav').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-filter]');
+  if (!b) return;
+  filter = b.dataset.filter;
+  renderNav();
+  renderJobs();
+});
+
+$('jobs').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const id = b.closest('.job').dataset.id;
+  const act = b.dataset.act;
   try {
     if (act === 'remove') await api(`/downloads/${id}`, { method: 'DELETE' });
     else await api(`/downloads/${id}/${act}`, { method: 'POST' });
-    banner.textContent = '';
-  } catch (err) { banner.textContent = err.message; }
+    banner();
+  } catch (err) { banner(err.message); }
   refresh();
 });
 
-document.getElementById('add').addEventListener('submit', async (e) => {
+$('add').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const input = document.getElementById('url');
   try {
-    await api('/downloads', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: input.value, connections: Number(document.getElementById('connections').value) }),
-    });
-    input.value = '';
-    banner.textContent = '';
-  } catch (err) { banner.textContent = err.message; }
+    await api('/downloads', { method: 'POST', body: { url: $('url').value, connections: Number($('connections').value), start: $('start').value } });
+    $('url').value = '';
+    banner();
+  } catch (err) { banner(err.message); }
   refresh();
 });
 
-api('/info').then((info) => { document.getElementById('folder').textContent = `Saving to ${info.download_dir}`; }).catch(() => {});
-refresh();
+$('pause-all').onclick = () => api('/downloads/pause-all', { method: 'POST' }).then(refresh).catch((e) => banner(e.message));
+$('resume-all').onclick = () => api('/downloads/resume-all', { method: 'POST' }).then(refresh).catch((e) => banner(e.message));
+$('limit').onchange = () => api('/settings', { method: 'PUT', body: { speed_limit_kbps: Number($('limit').value) } })
+  .then(() => banner()).catch((e) => banner(e.message));
+
+// ---- settings -------------------------------------------------------------------
+async function openSettings() {
+  const s = await api('/settings');
+  $('s-dir').value = s.download_dir;
+  $('s-sort').checked = s.sort_into_categories;
+  $('s-conn').value = s.connections;
+  $('s-par').value = s.max_parallel;
+  $('s-height').value = String(s.max_height);
+  $('s-proxy').value = s.proxy;
+  $('s-sched').checked = s.schedule.enabled;
+  $('s-start').value = s.schedule.start;
+  $('s-stop').value = s.schedule.stop;
+  $('s-clip').checked = s.clipboard_monitor;
+  $('settings-error').textContent = '';
+  $('settings-dialog').showModal();
+}
+$('open-settings').onclick = () => openSettings().catch((e) => banner(e.message));
+$('settings-save').addEventListener('click', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/settings', { method: 'PUT', body: {
+      download_dir: $('s-dir').value,
+      sort_into_categories: $('s-sort').checked,
+      connections: Number($('s-conn').value),
+      max_parallel: Number($('s-par').value),
+      max_height: Number($('s-height').value),
+      proxy: $('s-proxy').value,
+      schedule: { enabled: $('s-sched').checked, start: $('s-start').value, stop: $('s-stop').value },
+      clipboard_monitor: $('s-clip').checked,
+    } });
+    $('settings-dialog').close();
+    loadInfo();
+  } catch (err) { $('settings-error').textContent = err.message; }
+});
+
+// ---- site grabber ---------------------------------------------------------------
+let found = [];
+function renderFound() {
+  $('g-found').hidden = $('g-tools').hidden = !found.length;
+  $('g-found').innerHTML = found.map((f, i) => `
+    <label><input type="checkbox" data-i="${i}" checked>
+      <span class="name" title="${esc(f.url)}">${esc(f.name)}</span><span class="cat">${esc(f.category)}</span></label>`).join('');
+  updateSelection();
+}
+function selected() {
+  return [...$('g-found').querySelectorAll('input:checked')].map((c) => found[Number(c.dataset.i)].url);
+}
+function updateSelection() {
+  const n = selected().length;
+  $('g-count').textContent = `${n} of ${found.length} selected`;
+  $('g-add').disabled = $('g-later').disabled = !n;
+}
+$('g-found').addEventListener('change', updateSelection);
+$('g-all').onchange = () => {
+  $('g-found').querySelectorAll('input').forEach((c) => { c.checked = $('g-all').checked; });
+  updateSelection();
+};
+$('open-grabber').onclick = () => {
+  $('g-cats').innerHTML = categories.filter((c) => c !== 'Other').map((c) =>
+    `<label class="check"><input type="checkbox" value="${c}" ${c === 'Video' ? 'checked' : ''}> ${c}</label>`).join('');
+  $('grabber-error').textContent = '';
+  $('grabber-dialog').showModal();
+};
+$('g-find').onclick = async () => {
+  $('grabber-error').textContent = '';
+  $('g-find').disabled = true;
+  try {
+    const cats = [...$('g-cats').querySelectorAll('input:checked')].map((c) => c.value);
+    found = await api('/grabber', { method: 'POST', body: { url: $('g-url').value, categories: cats } });
+    if (!found.length) $('grabber-error').textContent = 'No files of those types are linked from that page.';
+    renderFound();
+  } catch (err) { $('grabber-error').textContent = err.message; }
+  $('g-find').disabled = false;
+};
+async function addFound(start) {
+  try {
+    await api('/downloads/batch', { method: 'POST', body: { urls: selected(), start, referer: $('g-url').value } });
+    $('grabber-dialog').close();
+    found = [];
+    renderFound();
+    refresh();
+  } catch (err) { $('grabber-error').textContent = err.message; }
+}
+$('g-add').onclick = () => addFound('now');
+$('g-later').onclick = () => addFound('later');
+
+// ---- startup --------------------------------------------------------------------
+async function loadInfo() {
+  try {
+    info = await api('/info');
+    categories = info.categories;
+    $('hint').textContent = `Saving to ${info.download_dir}. Files are split into parts and fetched in parallel; paused and crashed downloads resume where they stopped.`;
+    const s = await api('/settings');
+    $('limit').value = [...$('limit').options].some((o) => o.value === String(s.speed_limit_kbps)) ? String(s.speed_limit_kbps) : '0';
+  } catch { /* shown on next refresh */ }
+}
+loadInfo().then(refresh);
 setInterval(refresh, 1000);
 </script>
 </body>

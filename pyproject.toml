@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vidgrab"
-version = "0.1.0"
-description = "Multi-connection, resumable downloader for video links from almost any site."
+version = "0.2.0"
+description = "Multi-connection, resumable download manager for files and video links from almost any site."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,6 +15,10 @@ dependencies = [
 
 [project.optional-dependencies]
 server = ["fastapi>=0.110", "uvicorn>=0.29"]
+desktop = [
+    "fastapi>=0.110", "uvicorn>=0.29",
+    "pywebview>=5.0", "pystray>=0.19", "pillow>=10.0", "pyperclip>=1.8",
+]
 
 [project.scripts]
 vidgrab = "vidgrab.cli:main"
